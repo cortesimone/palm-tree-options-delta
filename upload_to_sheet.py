@@ -299,7 +299,12 @@ def _format_spot(spot):
 
 
 def build_section_values(columns, rows, metadata, section_label=None):
-    """Build sheet rows for one expiration section."""
+    """Build sheet rows for one expiration section.
+
+    Rows are sorted by strike price in descending order (highest first)
+    so that the spreadsheet displays a strictly decreasing sequence within
+    each expiration group.
+    """
     values = []
     underlying = metadata.get('underlying', '')
     spot = metadata.get('spot_price', '')
@@ -316,7 +321,8 @@ def build_section_values(columns, rows, metadata, section_label=None):
     ])
     values.append([])
     values.append(columns)
-    for row in rows:
+    sorted_rows = sorted(rows, key=lambda r: float(r.get('strike', 0)), reverse=True)
+    for row in sorted_rows:
         values.append([
             row.get('strike', ''),
             row.get('delta', ''),
