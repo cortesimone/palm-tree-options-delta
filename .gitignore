@@ -1,0 +1,22 @@
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+secrets/
+secret/
+
+# Google service-account and other credential files
+*.json
+*credentials*.json
+*service-account*.json
+*private-key*.json
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.sh
