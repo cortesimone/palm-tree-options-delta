@@ -33,7 +33,7 @@ print(getattr(config, '${1}', ''))
 
 ALPACA_API_KEY="$(read_config alpaca_api_key)"
 ALPACA_API_SECRET="$(read_config alpaca_api_secret)"
-ALPACA_DATA_URL="$(read_config data_base)"
+ALPACA_DATA_URL="$(read_config trade_base)"
 CRON_SYMBOL="$(read_config cron_symbol)"
 CRON_TARGET_DELTA="$(read_config cron_target_delta)"
 CRON_COUNT="$(read_config cron_count)"
@@ -55,7 +55,7 @@ API_RESPONSE="$(curl -s -o /dev/null -w "%{http_code}" \
     --request GET \
     --header "APCA-API-KEY-ID: ${ALPACA_API_KEY}" \
     --header "APCA-API-SECRET-KEY: ${ALPACA_API_SECRET}" \
-    "${ALPACA_DATA_URL}/v1beta1/status" 2>>"${LOG_FILE}")" || true
+    "${ALPACA_DATA_URL}/v3/clock" 2>>"${LOG_FILE}")" || true
 
 if [[ "${API_RESPONSE}" != "200" ]]; then
     log "ERROR: Alpaca API returned HTTP ${API_RESPONSE} -- market check failed"
@@ -66,12 +66,17 @@ MARKET_STATUS="$(curl -s \
     --request GET \
     --header "APCA-API-KEY-ID: ${ALPACA_API_KEY}" \
     --header "APCA-API-SECRET-KEY: ${ALPACA_API_SECRET}" \
-    "${ALPACA_DATA_URL}/v1beta1/status" 2>>"${LOG_FILE}")" || true
+    "${ALPACA_DATA_URL}/v3/clock" 2>>"${LOG_FILE}")" || true
 
-IS_OPEN="$(echo "${MARKET_STATUS}" | ${PYTHON} -c "import sys,json; print(json.load(sys.stdin)['data']['market'])" 2>/dev/null)" || true
+IS_OPEN="$(echo "${MARKET_STATUS}" | ${PYTHON} -c "
+import sys, json
+data = json.load(sys.stdin)
+phase = data['clocks'][0]['phase']
+print(phase in ('pre', 'core', 'post'))
+" 2>/dev/null)" || true
 
-if [[ "${IS_OPEN}" != "open" ]]; then
-    log "INFO: Market is ${IS_OPEN} -- skipping upload"
+if [[ "${IS_OPEN}" != "True" ]]; then
+    log "INFO: Market phase is ${IS_OPEN} -- skipping upload"
     exit 0
 fi
 
