@@ -1,16 +1,16 @@
-
 # Environment files and local secrets
 .env
 .env.*
 !.env.example
 secrets/
-secret/
 
 # Google service-account and other credential files
+# (except config/defaults.json which is committed)
 *.json
 *credentials*.json
 *service-account*.json
 *private-key*.json
+!config/defaults.json
 
 # Private keys and certificates
 *.pem
@@ -19,7 +19,8 @@ secret/
 *.pfx
 *.crt
 *.cer
-*.sh
+
+# Kilo IDE state
 .kilo/*
 
 # Virtual environment

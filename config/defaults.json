@@ -1,0 +1,6 @@
+{
+    "ALPACA_DATA_BASE": "https://data.alpaca.markets",
+    "ALPACA_TRADE_BASE": "https://paper-api.alpaca.markets",
+    "GSHEET_TAB_NAME": "CSP",
+    "GOOGLE_SHEETS_SCOPES": "https://www.googleapis.com/auth/spreadsheets"
+}

@@ -17,30 +17,18 @@ Examples:
 """
 
 import argparse
-import os
 import requests
 import sys
 from datetime import datetime, timedelta
-from pathlib import Path
-from dotenv import load_dotenv
 
-_SECRETS_DIR = Path(__file__).resolve().parent / 'secrets'
-load_dotenv(_SECRETS_DIR / '.env')
-load_dotenv()  # fallback: project-root .env
-
-API_KEY = os.environ.get('ALPACA_API_KEY', '')
-API_SECRET = os.environ.get('ALPACA_API_SECRET', '')
-BASE_URL = 'https://data.alpaca.markets/v1beta1/options/snapshots'
+from config import config
 
 
 def get_stock_price(symbol):
     resp = requests.get(
-        f'https://data.alpaca.markets/v2/stocks/trades/latest?symbols={symbol}',
-        headers={
-            'APCA-API-KEY-ID': API_KEY,
-            'APCA-API-SECRET-KEY': API_SECRET,
-            'accept': 'application/json',
-        },
+        f'{config.data_base}/v2/stocks/trades/latest?symbols={symbol}',
+        headers=config.alpaca_headers,
+        timeout=config.api_timeout,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -51,7 +39,6 @@ def next_friday(skip=0):
     today = datetime.now()
     days_until_friday = (4 - today.weekday()) % 7
     if days_until_friday == 0:
-        # today is Friday
         target = today
     else:
         target = today + timedelta(days=days_until_friday)
@@ -80,18 +67,15 @@ def fetch_puts_with_greeks(symbol, exp_date, spot_price):
     all_with_greeks = []
 
     resp = requests.get(
-        f'{BASE_URL}/{symbol}',
+        f'{config.data_base}/v1beta1/options/snapshots/{symbol}',
         params={
             'feed': 'indicative',
             'type': 'put',
             'limit': '100',
             'expiration_date': exp_date,
         },
-        headers={
-            'APCA-API-KEY-ID': API_KEY,
-            'APCA-API-SECRET-KEY': API_SECRET,
-            'accept': 'application/json',
-        },
+        headers=config.alpaca_headers,
+        timeout=config.api_timeout,
     )
     if resp.status_code != 200:
         return all_with_greeks
@@ -102,10 +86,8 @@ def fetch_puts_with_greeks(symbol, exp_date, spot_price):
     expected_exp = exp_date[2:10].replace('-', '')
 
     for sym, snap in puts.items():
-        # Format: TSLA + YYMMDD + C/P + 8-digit strike
         if len(sym) < 19:
             continue
-        # Check it's a put (P at position -9)
         if sym[-9:-8] != 'P':
             continue
 
@@ -122,6 +104,8 @@ def fetch_puts_with_greeks(symbol, exp_date, spot_price):
 
 
 def main():
+    config.require_api_credentials()
+
     parser = argparse.ArgumentParser(
         description='Find PUT options with delta closest to a target value.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -143,13 +127,6 @@ examples:
                         help='Exact expiration date in YYYY-MM-DD format')
 
     args = parser.parse_args()
-
-    # Validate API credentials
-    if not API_KEY or not API_SECRET:
-        parser.error(
-            'API credentials not set. Copy .env.example to secrets/.env '
-            'and fill in your Alpaca API key and secret.'
-        )
 
     # Validate: --skip and --date are mutually exclusive
     if args.skip_weeks > 0 and args.exp_date:

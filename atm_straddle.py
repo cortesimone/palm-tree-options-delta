@@ -16,42 +16,26 @@ Usage:
 """
 
 import argparse
-import os
 import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
 
-_SECRETS_DIR = Path(__file__).resolve().parent / 'secrets'
-load_dotenv(_SECRETS_DIR / '.env')
-load_dotenv()  # fallback: project-root .env
-
-API_KEY = os.environ.get('ALPACA_API_KEY', '')
-API_SECRET = os.environ.get('ALPACA_API_SECRET', '')
-DATA_BASE = 'https://data.alpaca.markets'
-TRADE_BASE = 'https://paper-api.alpaca.markets'
-CONTRACTS_URL = f'{TRADE_BASE}/v2/options/contracts'
-SNAPSHOTS_URL = f'{DATA_BASE}/v1beta1/options/snapshots'
+from config import config
 
 
 def _headers():
-    return {
-        'APCA-API-KEY-ID': API_KEY,
-        'APCA-API-SECRET-KEY': API_SECRET,
-        'accept': 'application/json',
-    }
+    return config.alpaca_headers
 
 
 def get_stock_price(symbol):
     resp = requests.get(
-        f'{DATA_BASE}/v2/stocks/trades/latest',
+        f'{config.data_base}/v2/stocks/trades/latest',
         params={'symbols': symbol},
         headers=_headers(),
-        timeout=30,
+        timeout=config.api_timeout,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -82,13 +66,12 @@ def get_available_expirations(symbol, look_ahead_days=120):
         if page_token:
             params['page_token'] = page_token
 
-        resp = requests.get(CONTRACTS_URL, params=params, headers=_headers(), timeout=60)
+        resp = requests.get(config.contracts_url, params=params, headers=_headers(), timeout=60)
         resp.raise_for_status()
         data = resp.json()
         contracts = data.get('option_contracts') or []
 
         if not contracts and not expirations and page_token is None:
-            # No contracts in range — ticker may be invalid or have no options
             return []
 
         for c in contracts:
@@ -99,7 +82,7 @@ def get_available_expirations(symbol, look_ahead_days=120):
         page_token = data.get('next_page_token')
         if not page_token:
             break
-        time.sleep(0.15)  # gentle pacing against rate limits
+        time.sleep(config.api_delay)
 
     return sorted(expirations)
 
@@ -109,7 +92,7 @@ def has_multiple_expirations_per_week(expirations):
     by_week = defaultdict(int)
     for exp in expirations:
         d = datetime.strptime(exp, '%Y-%m-%d').date()
-        iso = d.isocalendar()  # (year, week, weekday)
+        iso = d.isocalendar()
         by_week[(iso[0], iso[1])] += 1
     return any(count >= 2 for count in by_week.values())
 
@@ -120,7 +103,7 @@ def find_atm_contracts(symbol, exp_date, spot_price):
     on the given expiration, or None if unavailable.
     """
     resp = requests.get(
-        CONTRACTS_URL,
+        config.contracts_url,
         params={
             'underlying_symbols': symbol,
             'status': 'active',
@@ -142,13 +125,12 @@ def find_atm_contracts(symbol, exp_date, spot_price):
 
     best_call = min(calls, key=lambda c: abs(float(c['strike_price']) - spot_price))
     strike = float(best_call['strike_price'])
-    # Prefer the put at the same strike as the ATM call
     same_strike_puts = [p for p in puts if abs(float(p['strike_price']) - strike) < 1e-6]
     if same_strike_puts:
         best_put = same_strike_puts[0]
     else:
         best_put = min(puts, key=lambda p: abs(float(p['strike_price']) - spot_price))
-        strike = float(best_put['strike_price'])  # report put strike if mismatch
+        strike = float(best_put['strike_price'])
 
     return best_call['symbol'], best_put['symbol'], strike
 
@@ -174,17 +156,16 @@ def _midpoint_from_snapshot(snap):
 
 def get_option_midpoints(option_symbols):
     """Fetch snapshots for specific option symbols; return {symbol: mid}."""
-    # Retry a couple of times on 429
     last_err = None
     for attempt in range(4):
         resp = requests.get(
-            SNAPSHOTS_URL,
+            config.snapshots_url,
             params={
                 'symbols': ','.join(option_symbols),
                 'feed': 'indicative',
             },
             headers=_headers(),
-            timeout=30,
+            timeout=config.api_timeout,
         )
         if resp.status_code == 429:
             last_err = resp
@@ -208,7 +189,7 @@ def get_option_midpoints(option_symbols):
 def get_atm_straddle(symbol, exp_date, spot_price):
     """
     Calculate ATM straddle for one expiration.
-    Returns dict with strike, call_mid, put_mid, straddle — or None.
+    Returns dict with strike, call_mid, put_mid, straddle -- or None.
     """
     pair = find_atm_contracts(symbol, exp_date, spot_price)
     if not pair:
@@ -232,6 +213,8 @@ def get_atm_straddle(symbol, exp_date, spot_price):
 
 
 def main():
+    config.require_api_credentials()
+
     parser = argparse.ArgumentParser(
         description='Calculate ATM straddle prices for upcoming option expirations.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -244,12 +227,6 @@ examples:
     parser.add_argument('symbol', help='Stock ticker symbol')
     args = parser.parse_args()
     symbol = args.symbol.upper().strip()
-
-    if not API_KEY or not API_SECRET:
-        parser.error(
-            'API credentials not set. Copy .env.example to secrets/.env '
-            'and fill in your Alpaca API key and secret.'
-        )
 
     try:
         spot_price = get_stock_price(symbol)
@@ -291,7 +268,7 @@ examples:
     cadence = 'multiple expirations per week' if multi_per_week else 'weekly expirations'
     selected = expirations[:num_expirations]
 
-    print(f'Cadence: {cadence} → showing next {num_expirations} expiration(s)\n')
+    print(f'Cadence: {cadence} -> showing next {num_expirations} expiration(s)\n')
     print(
         f'{"Expiration":>12}  {"DTE":>5}  {"ATM Strike":>11}  '
         f'{"Call":>8}  {"Put":>8}  {"Straddle":>10}'
@@ -307,7 +284,7 @@ examples:
             result = get_atm_straddle(symbol, exp, spot_price)
             time.sleep(0.2)
         except requests.exceptions.RequestException as e:
-            print(f'{exp:>12}  {dte:>5}  {"—":>11}  {"—":>8}  {"—":>8}  error: {e}')
+            print(f'{exp:>12}  {dte:>5}  {"-":>11}  {"-":>8}  {"-":>8}  error: {e}')
             continue
 
         if result is None:

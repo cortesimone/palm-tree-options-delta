@@ -34,59 +34,38 @@ import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from dotenv import load_dotenv
 
-# ---------------------------------------------------------------------------
-# Google Sheets setup
-# ---------------------------------------------------------------------------
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-_SECRETS_DIR = Path(__file__).resolve().parent / 'secrets'
-load_dotenv(_SECRETS_DIR / '.env')
-load_dotenv()
+from config import config
 
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 SCRIPT_DIR = Path(__file__).resolve().parent
 FIND_SCRIPT = SCRIPT_DIR / 'find_near_delta_puts.py'
 
-def _env(name, default=''):
-    """Read env var and strip surrounding quotes if present."""
-    val = os.environ.get(name, default)
-    if val is None:
-        return default
-    return str(val).strip().strip('"').strip("'")
-
-
-# Default spreadsheet ID (override via env or CLI)
-DEFAULT_SPREADSHEET_ID = _env('GOOGLE_SHEET_ID') or _env('GSHEET_ID')
-DEFAULT_TAB_NAME = _env('GSHEET_TAB_NAME', 'CSP')
 
 def _resolve_credentials_path():
     """Resolve service-account JSON path from GSHEET_ACCESS_KEY or defaults."""
-    raw = (os.environ.get('GSHEET_ACCESS_KEY') or os.environ.get('GOOGLE_CREDENTIALS_PATH') or '').strip().strip('"').strip("'")
+    raw = config.gsheet_access_key
     candidates = []
     if raw:
         p = Path(raw)
         if p.is_absolute():
             candidates.append(p)
         else:
-            # filename only, secrets/filename, or project-relative path
             candidates.append(SCRIPT_DIR / raw)
-            candidates.append(_SECRETS_DIR / raw)
-            candidates.append(_SECRETS_DIR / p.name)
+            candidates.append(config.secrets_dir / raw)
+            candidates.append(config.secrets_dir / p.name)
             candidates.append(p)
-    candidates.append(_SECRETS_DIR / 'google-credentials.json')
+    candidates.append(config.secrets_dir / 'google-credentials.json')
     for c in candidates:
         if c.exists():
             return str(c)
-    return str(candidates[0] if candidates else _SECRETS_DIR / 'google-credentials.json')
+    return str(candidates[0] if candidates else config.secrets_dir / 'google-credentials.json')
 
 
 DEFAULT_CREDENTIALS_PATH = _resolve_credentials_path()
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 
 def next_friday(skip=0):
@@ -114,7 +93,8 @@ def run_find_script(symbol, target_delta, count, skip_weeks=0, exp_date=None):
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR))
     if result.returncode != 0:
         print(f'Error running find_near_delta_puts.py:')
-        print(result.stderr)
+        print(f'  stderr: {result.stderr.strip() or "(none)"}')
+        print(f'  stdout: {result.stdout.strip() or "(none)"}')
         sys.exit(1)
     return result.stdout
 
@@ -129,7 +109,6 @@ def parse_table_output(output):
     """
     lines = output.strip().split('\n')
 
-    # Find the header line (contains "Strike", "Delta", etc.)
     header_line_idx = None
     for i, line in enumerate(lines):
         if 'Strike' in line and 'Delta' in line and 'Theta' in line:
@@ -140,9 +119,7 @@ def parse_table_output(output):
         print('Could not find table header in output.')
         sys.exit(1)
 
-    # Parse header
     header_line = lines[header_line_idx]
-    # Extract column names from the header line
     header_pattern = re.compile(
         r'(?P<strike>Strike)\s{2,}'
         r'(?P<delta>Delta)\s{2,}'
@@ -153,7 +130,6 @@ def parse_table_output(output):
     )
     header_match = header_pattern.search(header_line)
     if not header_match:
-        # Fallback: extract known column names in order
         columns = []
         for name in ['Strike', 'Delta', 'Theta', 'Premium', 'Expiry', 'Symbol']:
             idx = header_line.find(name)
@@ -164,15 +140,12 @@ def parse_table_output(output):
     else:
         columns = [header_match.group(c) for c in ['strike', 'delta', 'theta', 'premium', 'expiry', 'symbol']]
 
-    # Parse data rows (skip separator line)
     rows = []
-    data_start = header_line_idx + 2  # skip header + separator line
+    data_start = header_line_idx + 2
     for line in lines[data_start:]:
         line = line.strip()
         if not line:
             continue
-        # Parse columns by position
-        # Format: "  180.00    -0.1823        0.4521        2.35  26-08-28  TSLA260828P00180000"
         row_match = re.match(
             r'\s*(?P<strike>[\d.]+)\s+'
             r'(?P<delta>-?[\d.]+)\s+'
@@ -186,7 +159,6 @@ def parse_table_output(output):
             row = row_match.groupdict()
             rows.append(row)
 
-    # Parse metadata (last few lines)
     metadata = {}
     for line in reversed(lines):
         if line.startswith('Underlying:'):
@@ -247,7 +219,6 @@ def find_or_create_sheet(sheets_service, spreadsheet_id, sheet_name):
         if sheet['properties']['title'] == sheet_name:
             return sheet['properties']['sheetId']
 
-    # Create new sheet
     sheets_service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={
@@ -261,7 +232,6 @@ def find_or_create_sheet(sheets_service, spreadsheet_id, sheet_name):
         }
     ).execute()
 
-    # Return the new sheet ID
     result = sheets_service.spreadsheets().get(
         spreadsheetId=spreadsheet_id
     ).execute()
@@ -275,7 +245,6 @@ def find_or_create_sheet(sheets_service, spreadsheet_id, sheet_name):
 def _sheet_range(sheet_name, cell_range=None):
     """Build an A1 range, quoting the sheet name when needed."""
     needs_quotes = any(c in sheet_name for c in " '!") or not sheet_name.isidentifier()
-    # Always quote sheet names that contain spaces or special chars
     if needs_quotes or ' ' in sheet_name:
         safe = "'" + sheet_name.replace("'", "''") + "'"
     else:
@@ -350,7 +319,7 @@ def upload_sections_to_sheet(sheets_service, spreadsheet_id, sheet_name, section
     total_rows = 0
     for i, section in enumerate(sections):
         if i > 0:
-            values.append([])  # blank line between sections
+            values.append([])
             values.append([])
         section_values = build_section_values(
             section['columns'],
@@ -373,6 +342,9 @@ def upload_sections_to_sheet(sheets_service, spreadsheet_id, sheet_name, section
 
 
 def main():
+    config.require_api_credentials()
+    config.require_gsheet_id()
+
     parser = argparse.ArgumentParser(
         description='Upload option data to a Google Spreadsheet tab.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -395,29 +367,15 @@ examples:
     parser.add_argument('--both', action='store_true',
                         help='Upload both upcoming and following Friday into the same tab')
     parser.add_argument('--tab', type=str, default=None,
-                        help=f'Target tab name (default: {DEFAULT_TAB_NAME})')
+                        help=f'Target tab name (default: {config.gsheet_tab_name})')
     parser.add_argument('--spreadsheet-id', type=str, default=None,
                         help='Google Spreadsheet ID (overrides GOOGLE_SHEET_ID / GSHEET_ID env var)')
 
     args = parser.parse_args()
 
-    # Validate API credentials
-    if not os.environ.get('ALPACA_API_KEY') or not os.environ.get('ALPACA_API_SECRET'):
-        parser.error(
-            'Alpaca API credentials not set. Ensure ALPACA_API_KEY and ALPACA_API_SECRET '
-            'are in secrets/.env or the project .env file.'
-        )
+    spreadsheet_id = args.spreadsheet_id or config.gsheet_id
+    tab_name = args.tab or config.gsheet_tab_name
 
-    # Validate spreadsheet ID
-    spreadsheet_id = args.spreadsheet_id or DEFAULT_SPREADSHEET_ID
-    if not spreadsheet_id:
-        parser.error(
-            'No spreadsheet ID provided. Set GSHEET_ID in .env or use --spreadsheet-id.'
-        )
-
-    tab_name = args.tab or DEFAULT_TAB_NAME
-
-    # Determine which expiration fetches to perform
     fetches = []
     if args.both:
         if args.exp_date:
@@ -451,7 +409,6 @@ examples:
             'skip': args.skip_weeks,
         })
 
-    # Authenticate
     print('Authenticating with Google Sheets API...')
     creds = get_service_credentials()
     sheets_service = build('sheets', 'v4', credentials=creds)

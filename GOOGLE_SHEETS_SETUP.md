@@ -35,7 +35,7 @@ mv ~/Downloads/google-credentials.json /home/simone/MEGA/dev/palm-tree-options-d
 ## 5. Share the Spreadsheet
 
 1. Create a new Google Spreadsheet (or use an existing one)
-2. Create tabs with the names you plan to use (e.g., "Next Friday Puts", "Following Friday Puts")
+2. Create tabs with the names you plan to use (e.g., "CSP")
 3. Click **Share** in the top-right
 4. Paste the **service account email** from step 3 (looks like `options-tracker@your-project.iam.gserviceaccount.com`)
 5. Grant **Editor** access and click **Share**
@@ -51,13 +51,13 @@ https://docs.google.com/spreadsheets/d/SPREADSHEET_ID_HERE/edit#gid=0
 
 ## 7. Configure Environment Variables
 
-Copy `.env.example` to `.env` and fill in the values:
+Copy `.env.example` to `secrets/.env` and fill in the values:
 
 ```bash
-cp .env.example .env
+cp .env.example secrets/.env
 ```
 
-Edit `.env` and set:
+Edit `secrets/.env` and set:
 
 ```env
 # Alpaca API (required for fetching option data)
@@ -65,16 +65,23 @@ ALPACA_API_KEY=your_alpaca_api_key
 ALPACA_API_SECRET=your_alpaca_api_secret
 
 # Google Sheets (required for uploading)
-# Existing vars (GSHEET_*):
-GSHEET_ACCESS_KEY=secrets/micro-instance-cortesi-com-bc58d2d37218.json
-GSHEET_ID=18ucnR8hIUuZgjGFJfD5NHL8EkiySMVGSun-9i8dNP5w
+GSHEET_ACCESS_KEY=google-credentials.json
+GOOGLE_SHEET_ID=SPREADSHEET_ID_HERE
 GSHEET_TAB_NAME=CSP
 
-# Or new vars (overridden by --spreadsheet-id / --upcoming-tab CLI flags):
-GOOGLE_SHEET_ID=SPREADSHEET_ID_HERE
-UPCOMING_TAB_NAME=Next Friday Puts
-FOLLOWING_TAB_NAME=Following Friday Puts
+# Optional: override production defaults from config/settings.py
+# ENVIRONMENT=local
 ```
+
+### Configuration hierarchy
+
+Values are loaded in this order (highest priority first):
+
+1. **Environment variables** — set via `export` on the server or locally
+2. **`secrets/.env`** — deployed with the application, gitignored
+3. **`config/settings.py`** — hardcoded production defaults, source-controlled
+
+Only override what differs from the defaults. For example, on a remote server you only need `secrets/.env` with your credentials. On local development, set `ENVIRONMENT=local` or override specific values via environment variables.
 
 ## 8. Install Dependencies
 
@@ -91,11 +98,10 @@ python3 upload_to_sheet.py TSLA -0.18 4
 # Upload both upcoming and following Friday
 python3 upload_to_sheet.py TSLA -0.18 4 --both
 
-# Upload with custom spreadsheet ID and tab names
+# Upload with custom spreadsheet ID and tab name
 python3 upload_to_sheet.py AAPL -0.25 3 \
   --spreadsheet-id "1ABCxyz..." \
-  --upcoming-tab "AAPL Next" \
-  --following-tab "AAPL Following"
+  --tab "AAPL CSP"
 ```
 
 ## Troubleshooting
