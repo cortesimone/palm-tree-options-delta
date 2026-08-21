@@ -10,12 +10,20 @@ export APP_ENV=production
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="${SCRIPT_DIR}/market_check.log"
+VENV_PYTHON="${SCRIPT_DIR}/.venv/bin/python3"
+
+# Use venv python if available, otherwise fall back to system python
+if [[ -x "${VENV_PYTHON}" ]]; then
+    PYTHON="${VENV_PYTHON}"
+else
+    PYTHON="python3"
+fi
 
 # ---------------------------------------------------------------------------
 # Load configuration via the Python config module (hierarchical loading).
 # ---------------------------------------------------------------------------
 read_config() {
-    python3 -c "
+    ${PYTHON} -c "
 import sys, os
 sys.path.insert(0, '${SCRIPT_DIR}')
 from config import config
@@ -60,7 +68,7 @@ MARKET_STATUS="$(curl -s \
     --header "APCA-API-SECRET-KEY: ${ALPACA_API_SECRET}" \
     "${ALPACA_DATA_URL}/v1beta1/status" 2>>"${LOG_FILE}")" || true
 
-IS_OPEN="$(echo "${MARKET_STATUS}" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['market'])" 2>/dev/null)" || true
+IS_OPEN="$(echo "${MARKET_STATUS}" | ${PYTHON} -c "import sys,json; print(json.load(sys.stdin)['data']['market'])" 2>/dev/null)" || true
 
 if [[ "${IS_OPEN}" != "open" ]]; then
     log "INFO: Market is ${IS_OPEN} -- skipping upload"
@@ -71,7 +79,7 @@ log "INFO: Market is open -- running upload"
 cd "${SCRIPT_DIR}"
 
 # Build the upload command from config values
-UPLOAD_CMD="python3 upload_to_sheet.py ${CRON_SYMBOL} ${CRON_TARGET_DELTA} ${CRON_COUNT}"
+UPLOAD_CMD="${PYTHON} upload_to_sheet.py ${CRON_SYMBOL} ${CRON_TARGET_DELTA} ${CRON_COUNT}"
 if [[ "${CRON_USE_BOTH}" == "True" || "${CRON_USE_BOTH}" == "true" || "${CRON_USE_BOTH}" == "1" ]]; then
     UPLOAD_CMD="${UPLOAD_CMD} --both"
 fi

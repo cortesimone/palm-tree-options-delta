@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 import requests
 
 from config import config
+from utils.expiration import is_today_an_expiration
 
 
 def _headers():
@@ -266,6 +267,15 @@ examples:
     multi_per_week = has_multiple_expirations_per_week(expirations)
     num_expirations = 5 if multi_per_week else 3
     cadence = 'multiple expirations per week' if multi_per_week else 'weekly expirations'
+
+    # Skip today's expiration — data collection starts from the next available date
+    today_str = datetime.now().date().isoformat()
+    expirations = [e for e in expirations if e > today_str]
+
+    if not expirations:
+        print(f'Error: No future option expirations found for "{symbol}".')
+        sys.exit(1)
+
     selected = expirations[:num_expirations]
 
     print(f'Cadence: {cadence} -> showing next {num_expirations} expiration(s)\n')

@@ -34,11 +34,13 @@ import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 from config import config
+from utils.expiration import next_friday_skip_today, is_today_an_expiration
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 FIND_SCRIPT = SCRIPT_DIR / 'find_near_delta_puts.py'
@@ -66,17 +68,6 @@ def _resolve_credentials_path():
 
 DEFAULT_CREDENTIALS_PATH = _resolve_credentials_path()
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-
-
-def next_friday(skip=0):
-    """Return the date of the Nth Friday from today."""
-    today = datetime.now()
-    days_until_friday = (4 - today.weekday()) % 7
-    if days_until_friday == 0:
-        target = today
-    else:
-        target = today + timedelta(days=days_until_friday)
-    return target + timedelta(weeks=skip)
 
 
 def run_find_script(symbol, target_delta, count, skip_weeks=0, exp_date=None):
@@ -337,6 +328,16 @@ def upload_sections_to_sheet(sheets_service, spreadsheet_id, sheet_name, section
         body={'values': values},
     ).execute()
 
+    # Append CET timestamp as the last row
+    cet_time = datetime.now(ZoneInfo('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S CET')
+    timestamp_values = [[f'Uploaded: {cet_time}']]
+    sheets_service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=_sheet_range(sheet_name, f'A{len(values) + 1}'),
+        valueInputOption='RAW',
+        body={'values': timestamp_values},
+    ).execute()
+
     print(f'  Uploaded {total_rows} rows ({len(sections)} section(s)) to tab "{sheet_name}"')
     return True
 
@@ -421,7 +422,7 @@ examples:
         if fetch['exp_date']:
             exp_display = fetch['exp_date']
         else:
-            exp_display = next_friday(skip=fetch['skip']).strftime('%Y-%m-%d')
+            exp_display = next_friday_skip_today(skip=fetch['skip']).strftime('%Y-%m-%d')
         print(f'--- Fetch {i}/{len(fetches)}: {fetch["label"]} ({exp_display}) ---')
 
         output = run_find_script(
@@ -437,6 +438,12 @@ examples:
             print(f'  No data rows found. Skipping.\n')
             continue
 
+        # Skip today's expiration; move to next available
+        actual_exp = metadata.get('expiration', exp_display)
+        if is_today_an_expiration(actual_exp):
+            print(f'  Today ({actual_exp}) is an expiration date — skipping.\n')
+            continue
+
         print(f'  Found {len(rows)} options (expiration {metadata.get("expiration", exp_display)})')
         sections.append({
             'label': fetch['label'],
@@ -444,6 +451,7 @@ examples:
             'rows': rows,
             'metadata': metadata,
         })
+
         print()
 
     if not sections:
