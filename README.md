@@ -1,6 +1,6 @@
-# Straddle
+# Palm Tree Options Delta
 
-Find put options with delta closest to a target for a given expiration date, using the Alpaca Markets API.
+CLI tools for equity options research via the Alpaca Markets API: find puts near a target delta, price ATM straddles across upcoming expirations, and push results to Google Sheets when the market is open.
 
 ## Setup
 
